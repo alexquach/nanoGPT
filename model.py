@@ -14,6 +14,8 @@ from dataclasses import dataclass
 import torch
 import torch.nn as nn
 from torch.nn import functional as F
+import einops
+import wandb
 
 class LayerNorm(nn.Module):
     """ LayerNorm but with an optional bias. PyTorch doesn't support simply bias=False """
@@ -79,14 +81,52 @@ class MLP(nn.Module):
 
     def __init__(self, config):
         super().__init__()
-        self.c_fc    = nn.Linear(config.n_embd, 4 * config.n_embd, bias=config.bias)
+        self.c_fc    = nn.Linear(config.n_embd, 4 * config.n_embd * 8, bias=config.bias)
         self.gelu    = nn.GELU()
-        self.c_proj  = nn.Linear(4 * config.n_embd, config.n_embd, bias=config.bias)
+        self.c_proj  = nn.Linear(4 * config.n_embd * 8, config.n_embd, bias=config.bias)
         self.dropout = nn.Dropout(config.dropout)
+        self.is_sparse_mlp = config.is_sparse_mlp if hasattr(config, 'is_sparse_mlp') else False
+        
+        # TopK configuration
+        self.topk_number = 100
+        self.hidden_size = 4 * config.n_embd
+        if self.is_sparse_mlp:
+            self.hidden_size *= 8
 
     def forward(self, x):
         x = self.c_fc(x)
         x = self.gelu(x)
+        
+        if self.is_sparse_mlp:
+            # Apply TopK activation function
+            batch_size, seq_len, hidden_size = x.shape
+            
+            # Reshape to combine batch and sequence dimensions for topk processing
+            x_flat = einops.rearrange(x, 'b s h -> (b s) h')
+            
+            # Calculate k value (how many elements to keep)
+            k = max(1, int(self.topk_number))
+            
+            # Get topk values and indices (by magnitude)
+            topk_values, topk_indices = torch.topk(x_flat.abs(), k, dim=1)
+            
+            # Create a mask of zeros
+            mask = torch.zeros_like(x_flat)
+            
+            # Set the topk positions to their original values
+            # For each row (example), gather the original values at the topk indices
+            row_indices = torch.arange(x_flat.size(0), device=x_flat.device).unsqueeze(1).expand(-1, k)
+            x_flat_sparse = mask.scatter_(1, topk_indices, x_flat.gather(1, topk_indices))
+            
+            # Reshape back to original dimensions
+            x = einops.rearrange(x_flat_sparse, '(b s) h -> b s h', b=batch_size, s=seq_len)
+            
+            # Log sparsity metrics during training
+            if self.training:
+                with torch.no_grad():
+                    sparsity = 1.0 - (k / hidden_size)
+                    wandb.log({"topk_sparsity": sparsity})
+        
         x = self.c_proj(x)
         x = self.dropout(x)
         return x
