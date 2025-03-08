@@ -81,17 +81,17 @@ class MLP(nn.Module):
 
     def __init__(self, config):
         super().__init__()
-        self.c_fc    = nn.Linear(config.n_embd, 4 * config.n_embd * 8, bias=config.bias)
+        self.hidden_size = 4 * config.n_embd
+        if config.is_sparse_mlp:
+            self.hidden_size *= 8
+        self.c_fc    = nn.Linear(config.n_embd, self.hidden_size, bias=config.bias)
         self.gelu    = nn.GELU()
-        self.c_proj  = nn.Linear(4 * config.n_embd * 8, config.n_embd, bias=config.bias)
+        self.c_proj  = nn.Linear(self.hidden_size, config.n_embd, bias=config.bias)
         self.dropout = nn.Dropout(config.dropout)
         self.is_sparse_mlp = config.is_sparse_mlp if hasattr(config, 'is_sparse_mlp') else False
         
         # TopK configuration
         self.topk_number = 100
-        self.hidden_size = 4 * config.n_embd
-        if self.is_sparse_mlp:
-            self.hidden_size *= 8
 
     def forward(self, x):
         x = self.c_fc(x)
@@ -154,6 +154,7 @@ class GPTConfig:
     n_embd: int = 768
     dropout: float = 0.0
     bias: bool = True # True: bias in Linears and LayerNorms, like GPT-2. False: a bit better and faster
+    is_sparse_mlp: bool = True
 
 class GPT(nn.Module):
 
