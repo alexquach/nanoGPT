@@ -82,8 +82,8 @@ class MLP(nn.Module):
     def __init__(self, config):
         super().__init__()
         self.hidden_size = 4 * config.n_embd
-        if config.is_sparse_mlp:
-            self.hidden_size *= 8
+        # if config.is_sparse_mlp:
+        #     self.hidden_size *= 8
         self.c_fc    = nn.Linear(config.n_embd, self.hidden_size, bias=config.bias)
         self.gelu    = nn.GELU()
         self.c_proj  = nn.Linear(self.hidden_size, config.n_embd, bias=config.bias)

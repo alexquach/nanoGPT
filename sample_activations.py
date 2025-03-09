@@ -20,15 +20,15 @@ from model import GPTConfig, GPT
 
 # -----------------------------------------------------------------------------
 # default config values
-out_dir = 'out_8x_sparse'  # output directory
+out_dir = 'out'  # output directory
 tag = '_'.join(out_dir.split('_')[1:])
 init_from = 'resume'  # 'resume' from checkpoint in out_dir
 dataset = 'openwebtext'  # dataset name
-num_samples = 10  # number of training samples to analyze
+num_samples = 1000  # number of training samples to analyze
 max_tokens = 1024  # max tokens per sample
-device = "cpu" #'cuda' if torch.cuda.is_available() else 'cpu'
+device = 'cuda' if torch.cuda.is_available() else 'cpu'
 dtype = 'bfloat16' if torch.cuda.is_available() and torch.cuda.is_bf16_supported() else 'float16'
-proportion_neurons_to_sample = 0.125  # proportion of neurons to randomly sample
+proportion_neurons_to_sample = 4 / 3072 #/ 8  # proportion of neurons to randomly sample = 4 neurons per layer
 output_file = f'mlp_activations_{tag}_posttopk_{proportion_neurons_to_sample}.csv'  # output file for the activation data
 seed = 1337
 # -----------------------------------------------------------------------------
@@ -164,14 +164,7 @@ def sample_mlp_neurons(model, proportion_neurons_to_sample):
     return all_neurons
 
 def sample_neuron_activations(model, samples, neurons_to_sample, hook_point='post_gelu'):
-    """Collect activations for the specified neurons across all samples.
-    
-    Args:
-        model: The GPT model
-        samples: List of input samples
-        neurons_to_sample: List of neurons to sample
-        hook_point: Where to capture activations - 'post_gelu' or 'post_topk'
-    """
+    """Collect activations for the specified neurons across all samples."""
     activation_hook = ActivationHook()
     
     # Register hooks on each layer's MLP
@@ -198,12 +191,29 @@ def sample_neuron_activations(model, samples, neurons_to_sample, hook_point='pos
         sample_activations = {}
         for neuron in neurons_to_sample:
             layer_activations = activation_hook.activations[neuron.layer_idx]
-            # Store per-token activations instead of averaging
-            # Shape: [sequence_length]
-            token_activations = layer_activations[0, :, neuron.neuron_idx].cpu().numpy()
-            sample_activations[str(neuron)] = token_activations
+            # Get token activations
+            token_activations_tensor = layer_activations[0, :, neuron.neuron_idx].cpu()
+            
+            # Convert to sparse representation - only store non-zero values
+            # For each token position, if activation > 0, store (position, value)
+            non_zero_positions = token_activations_tensor.nonzero().squeeze(-1)
+            
+            if len(non_zero_positions.shape) > 0:  # Check if there are any non-zero values
+                non_zero_values = token_activations_tensor[non_zero_positions]
+                # Store as a dictionary {position: value} for sparse representation
+                sparse_activations = {int(pos.item()): float(val.item()) 
+                                    for pos, val in zip(non_zero_positions, non_zero_values)}
+            else:
+                sparse_activations = {}
+                
+            sample_activations[str(neuron)] = sparse_activations
+            
+        # Store a copy of the activations to avoid reference issues
+        all_activations.append(sample_activations.copy())
         
-        all_activations.append(sample_activations)
+        # Explicitly clear GPU cache to prevent memory buildup
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
     
     # Clean up hooks
     activation_hook.remove_hooks()
@@ -258,7 +268,7 @@ def main():
     for idx, (activations, x) in enumerate(zip(all_activations, samples)):
         # Get the decoded tokens for this sample
         tokens = prompts_tokenized[idx]  # We'll need to add this to get_first_samples
-        
+         
         # For each position in the sequence
         for pos in range(len(tokens)):
             row = {
@@ -269,8 +279,10 @@ def main():
             }
             
             # Add activation for each neuron at this position
-            for neuron_id, token_activations in activations.items():
-                row[f'neuron_{neuron_id}'] = token_activations[pos]
+            for neuron_id, sparse_activations in activations.items():
+                # Use get() method to handle the sparse dictionary representation
+                # If position not in dictionary, it means activation was 0
+                row[f'neuron_{neuron_id}'] = sparse_activations.get(pos, 0.0)
             
             df_data.append(row)
     
@@ -280,7 +292,7 @@ def main():
     output_path = os.path.join(out_dir, output_file)
     print(f"Saving activations to {output_path}...")
     df.to_csv(output_path, index=False)
-    print("Done!")
+    print(f"Done! Saved to {output_path}")
 
 if __name__ == '__main__':
     # Parse command-line arguments
