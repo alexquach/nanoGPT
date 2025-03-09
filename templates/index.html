@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Neuron Activation Visualizer</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body>
+    <div class="container">
+        <h1>Neuron Activation Visualizer</h1>
+        
+        <div class="controls model-controls">
+            <div class="model-selector">
+                <label>Select Model:</label>
+                <div class="model-buttons">
+                    {% for model_key, model in models.items() %}
+                    <button class="model-button {% if model_key == active_model %}active{% endif %}" 
+                            data-model="{{ model_key }}">
+                        {{ model.name }}
+                    </button>
+                    {% endfor %}
+                </div>
+            </div>
+        </div>
+        
+        <div class="controls">
+            <div class="select-container">
+                <label for="neuron-select">Select Neuron:</label>
+                <select id="neuron-select">
+                    {% for neuron in neurons %}
+                    <option value="{{ neuron }}">{{ neuron }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            
+            <div class="slider-container">
+                <label for="top-n-slider">Number of top samples:</label>
+                <input type="range" id="top-n-slider" min="1" max="20" value="10">
+                <span id="top-n-value">10</span>
+            </div>
+            
+            <div class="slider-container">
+                <label for="context-slider">Context window:</label>
+                <input type="range" id="context-slider" min="5" max="50" value="15">
+                <span id="context-value">15</span>
+            </div>
+            
+            <div class="slider-container">
+                <label for="threshold-slider">Significance threshold:</label>
+                <input type="range" id="threshold-slider" min="0" max="100" value="10" step="1">
+                <span id="threshold-value">0.1</span>
+            </div>
+        </div>
+        
+        <div class="results-container">
+            <h2>Top Activating Samples for <span id="selected-neuron"></span> in <span id="model-name">{{ models[active_model].name }}</span></h2>
+            <div id="samples-container"></div>
+        </div>
+    </div>
+    
+    <script>
+        // Pass current model info to JavaScript
+        const activeModel = "{{ active_model }}";
+    </script>
+    <script src="{{ url_for('static', filename='js/visualizer.js') }}"></script>
+</body>
+</html> 
